@@ -22,6 +22,8 @@ BASE_CONFIG = {
     "asp": True,
     "country": "US",
     "render_js": True,
+    # Wait for page to fully load (may help bypass JS challenges)
+    "rendering_wait": 5000,
     # Use session to maintain cookies which may help bypass login walls
     "session": "glassdoor_session",
     # Uncomment to use residential proxies (costs more API credits but may help with blocks)
