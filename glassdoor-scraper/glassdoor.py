@@ -155,8 +155,8 @@ async def scrape_reviews(
         return ScrapeConfig(
             url='https://www.glassdoor.com/bff/employer-profile-mono/employer-reviews',
             method='POST',
-            asp=True,
-            render_js=False,  # POST requests don't support render_js=True
+            # Note: asp=True requires render_js which doesn't support POST, so we disable it
+            # The API endpoint doesn't need anti-scraping protection anyway
             country="US",
             headers={
                 "content-type": "application/json",
@@ -235,13 +235,16 @@ async def scrape_reviews(
     pages_scraped = first_remaining_page - 1
     async for result in SCRAPFLY.concurrent_scrape(remaining_pages):
         pages_scraped += 1
-        if not isinstance(result, ScrapflyScrapeError):
+        if isinstance(result, ScrapflyScrapeError):
+            log.error(f"failed to scrape page {pages_scraped}/{total_pages}, got: {result.message}")
+            continue
+        try:
             page_data = json.loads(result.content)
             review_data.extend(page_data['data']['employerReviews']['reviews'])
             log.info("progress: page {}/{} - {} reviews collected", pages_scraped, total_pages, len(review_data))
             save_incremental(review_data)
-        else:
-            log.error(f"failed to scrape page {pages_scraped}/{total_pages}, got: {result.message}")
+        except (json.JSONDecodeError, KeyError) as e:
+            log.error(f"failed to parse page {pages_scraped}/{total_pages}, got: {e}")
 
     log.info("completed: scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
     return review_data
