@@ -24,8 +24,8 @@ BASE_CONFIG = {
     "render_js": True,
     # Use session to maintain cookies which may help bypass login walls
     "session": "glassdoor_session",
-    # Use residential proxies to appear more like real users (costs more API credits)
-    "proxy_pool": "public_residential_pool",
+    # Uncomment to use residential proxies (costs more API credits but may help with blocks)
+    # "proxy_pool": "public_residential_pool",
 }
 
 
