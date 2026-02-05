@@ -151,72 +151,33 @@ async def scrape_reviews(
         output_path: Optional path to save results incrementally (saves after each page)
     """
 
-    def generate_api_request_config(employer_id: int, dynamic_profile_id: int, page_number: int) -> ScrapeConfig:
-        return ScrapeConfig(
-            url='https://www.glassdoor.com/bff/employer-profile-mono/employer-reviews',
-            method='POST',
-            # Note: asp=True requires render_js which doesn't support POST, so we disable it
-            # The API endpoint doesn't need anti-scraping protection anyway
-            country="US",
-            headers={
-                "content-type": "application/json",
-            },
-            body=json.dumps({
-                "applyDefaultCriteria":True,
-                "employerId":employer_id,
-                "employmentStatuses":["REGULAR","PART_TIME"],
-                "jobTitle":None,
-                "goc":None,
-                "location":{},
-                "defaultLanguage":"eng",
-                "language":"eng",
-                "mlHighlightSearch":None,
-                "onlyCurrentEmployees":False,
-                "overallRating":None,
-                "pageSize":5,"page":page_number,
-                "preferredTldId":0,
-                "reviewCategories":[],
-                "sort":"DATE",
-                "textSearch":"",
-                "worldwideFilter":False,
-                "dynamicProfileId":dynamic_profile_id,
-                "useRowProfileTldForRatings":True,
-                "enableKeywordSearch":True
-            })
-        )
-
     def save_incremental(data: List[Dict]) -> None:
         """Save current results to output file"""
         if output_path:
             Path(output_path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     review_data = []
-    log.info("scraping reviews api requirements from {}", url)
+    log.info("scraping reviews from {}", url)
 
-    first_page_html = await SCRAPFLY.async_scrape(ScrapeConfig(url=url, **BASE_CONFIG))
-    if isinstance(first_page_html, ScrapflyScrapeError):
-        log.error(f"Failed to scrape the first page {url}, got: {first_page_html.message}")
+    # Scrape first page to get total pages
+    first_page = await SCRAPFLY.async_scrape(ScrapeConfig(url=url, **BASE_CONFIG))
+    if isinstance(first_page, ScrapflyScrapeError):
+        log.error(f"Failed to scrape the first page {url}, got: {first_page.message}")
         return []
 
-    employer_metadata = parse_reviews_api_metadata(first_page_html)
-
-    # Always fetch page 1 to get total_pages metadata
-    first_api_page = await SCRAPFLY.async_scrape(
-        generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], 1)
-    )
-    if isinstance(first_api_page, ScrapflyScrapeError):
-        log.error(f"Failed to scrape first API page, got: {first_api_page.message}")
+    first_page_data = parse_reviews(first_page)
+    if not first_page_data:
+        log.error(f"Failed to parse reviews data from {url}")
         return []
 
-    first_page_data = json.loads(first_api_page.content)
-    total_pages = first_page_data['data']['employerReviews']['numberOfPages']
-
+    total_pages = first_page_data.get("numberOfPages", 1)
     if max_pages and max_pages < total_pages:
         total_pages = max_pages
 
     # Only include page 1 reviews if starting from page 1
     if start_page == 1:
-        review_data.extend(first_page_data['data']['employerReviews']['reviews'])
+        reviews = first_page_data.get("reviews", [])
+        review_data.extend(reviews)
         log.info("progress: page 1/{} - {} reviews collected", total_pages, len(review_data))
         save_incremental(review_data)
 
@@ -227,8 +188,11 @@ async def scrape_reviews(
         return review_data
 
     log.info("scraping pages {}-{} of {}", first_remaining_page, total_pages, total_pages)
+
+    # Use HTML pagination (like scrape_salaries does)
+    base_url = first_page.context["url"]
     remaining_pages = [
-        generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], page)
+        ScrapeConfig(url=Url.change_page(base_url, page=page), **BASE_CONFIG)
         for page in range(first_remaining_page, total_pages + 1)
     ]
 
@@ -239,11 +203,15 @@ async def scrape_reviews(
             log.error(f"failed to scrape page {pages_scraped}/{total_pages}, got: {result.message}")
             continue
         try:
-            page_data = json.loads(result.content)
-            review_data.extend(page_data['data']['employerReviews']['reviews'])
-            log.info("progress: page {}/{} - {} reviews collected", pages_scraped, total_pages, len(review_data))
-            save_incremental(review_data)
-        except (json.JSONDecodeError, KeyError) as e:
+            page_data = parse_reviews(result)
+            if page_data:
+                reviews = page_data.get("reviews", [])
+                review_data.extend(reviews)
+                log.info("progress: page {}/{} - {} reviews collected", pages_scraped, total_pages, len(review_data))
+                save_incremental(review_data)
+            else:
+                log.error(f"failed to parse page {pages_scraped}/{total_pages}, no data found")
+        except Exception as e:
             log.error(f"failed to parse page {pages_scraped}/{total_pages}, got: {e}")
 
     log.info("completed: scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
