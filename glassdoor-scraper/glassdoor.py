@@ -126,12 +126,44 @@ def parse_reviews(result: ScrapeApiResponse) -> Dict:
 def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
     """parse Glassdoor reviews api metadata from html page"""
     selector = result.selector
+
+    # Try multiple approaches to find employer metadata
     script_data = selector.xpath("//script[contains(text(), 'profileId')]/text()").get()
-    employer_metadata = json.loads(re.search(r'"employer"\s*:\s*(\{[^}]+\})', script_data).group(1))
-    return {
-        'employer_id': int(employer_metadata['id']),
-        'dynamic_profile_id': int(employer_metadata['profileId']),
-    }
+
+    if script_data:
+        # Try to match employer object - handle nested braces
+        employer_match = re.search(r'"employer"\s*:\s*(\{.*?"profileId"\s*:\s*\d+[^}]*\})', script_data)
+        if employer_match:
+            try:
+                employer_metadata = json.loads(employer_match.group(1))
+                return {
+                    'employer_id': int(employer_metadata['id']),
+                    'dynamic_profile_id': int(employer_metadata['profileId']),
+                }
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Alternative: extract id and profileId directly
+        id_match = re.search(r'"employer"\s*:\s*\{[^}]*"id"\s*:\s*(\d+)', script_data)
+        profile_match = re.search(r'"profileId"\s*:\s*(\d+)', script_data)
+        if id_match and profile_match:
+            return {
+                'employer_id': int(id_match.group(1)),
+                'dynamic_profile_id': int(profile_match.group(1)),
+            }
+
+    # Fallback: try finding in Apollo state cache
+    cache = find_hidden_data(result)
+    if cache:
+        for key, value in cache.items():
+            if isinstance(value, dict):
+                if 'id' in value and 'profileId' in value:
+                    return {
+                        'employer_id': int(value['id']),
+                        'dynamic_profile_id': int(value['profileId']),
+                    }
+
+    raise ValueError("Could not find employer metadata in page. The page structure may have changed.")
 
 
 async def scrape_reviews(
@@ -214,9 +246,13 @@ async def scrape_reviews(
         log.error(f"Failed to scrape the first page {url}, got: {first_page_html.message}")
         return review_data if review_data else []
 
-    employer_metadata = parse_reviews_api_metadata(first_page_html)
-    employer_id = employer_metadata['employer_id']
-    dynamic_profile_id = employer_metadata['dynamic_profile_id']
+    try:
+        employer_metadata = parse_reviews_api_metadata(first_page_html)
+        employer_id = employer_metadata['employer_id']
+        dynamic_profile_id = employer_metadata['dynamic_profile_id']
+    except (ValueError, KeyError) as e:
+        log.error(f"Failed to parse employer metadata from {url}: {e}")
+        return review_data if review_data else []
 
     # Get first page to determine total pages (or start_page if resuming)
     first_api_page = await SCRAPFLY.async_scrape(
