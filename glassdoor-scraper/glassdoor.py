@@ -142,6 +142,7 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
             url='https://www.glassdoor.com/bff/employer-profile-mono/employer-reviews',
             method='POST',
             asp=True,
+            render_js=False,  # POST requests don't support render_js=True
             country="US",
             headers={
                 "content-type": "application/json",
@@ -197,8 +198,11 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
     ]
 
     async for result in SCRAPFLY.concurrent_scrape(remaining_pages):
-        page_data = json.loads(result.content)
-        review_data.extend(page_data['data']['employerReviews']['reviews'])
+        if not isinstance(result, ScrapflyScrapeError):
+            page_data = json.loads(result.content)
+            review_data.extend(page_data['data']['employerReviews']['reviews'])
+        else:
+            log.error(f"failed to scrape reviews page, got: {result.message}")
 
     log.info("scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
     return review_data
