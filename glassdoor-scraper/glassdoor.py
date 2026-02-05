@@ -134,16 +134,29 @@ def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
     }
 
 
-async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
-    """Scrape Glassdoor reviews listings from reviews page (with pagination)"""
+async def scrape_reviews(url: str, max_pages: Optional[int] = None, output_path: Optional[str] = None) -> Dict:
+    """Scrape Glassdoor reviews listings from reviews page (with pagination)
+
+    Args:
+        url: The Glassdoor reviews page URL
+        max_pages: Maximum number of pages to scrape (optional)
+        output_path: Path to save reviews incrementally as JSON (optional)
+    """
+
+    def save_incrementally(reviews: List[Dict], path: str):
+        """Save reviews to JSON file"""
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(reviews, f, indent=2, ensure_ascii=False)
+        log.info(f"saved {len(reviews)} reviews to {path}")
 
     def generate_api_request_config(employer_id: int, dynamic_profile_id: int, page_number: int) -> ScrapeConfig:
+        # Note: ASP can auto-upgrade to render_js=True which doesn't work with POST
+        # The BFF API endpoint doesn't need ASP, so we disable it
         return ScrapeConfig(
             url='https://www.glassdoor.com/bff/employer-profile-mono/employer-reviews',
             method='POST',
-            asp=True,
+            asp=False,
             country="US",
-            render_js=False,  # POST requests don't support render_js=True
             headers={
                 "content-type": "application/json",
             },
@@ -191,6 +204,10 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
     review_data.extend(first_page_data['data']['employerReviews']['reviews'])
     total_pages = first_page_data['data']['employerReviews']['numberOfPages']
 
+    # Save first page incrementally
+    if output_path:
+        save_incrementally(review_data, output_path)
+
     if max_pages and max_pages < total_pages:
         total_pages = max_pages
 
@@ -206,6 +223,9 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
             continue
         page_data = json.loads(result.content)
         review_data.extend(page_data['data']['employerReviews']['reviews'])
+        # Save incrementally after each page
+        if output_path:
+            save_incrementally(review_data, output_path)
 
     log.info("scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
     return review_data
