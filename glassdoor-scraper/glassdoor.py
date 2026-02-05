@@ -22,6 +22,8 @@ BASE_CONFIG = {
     "asp": True,
     "country": "US",
     "render_js": True,
+    # Use session to maintain cookies which may help bypass login walls
+    "session": "glassdoor_session",
 }
 
 
@@ -200,6 +202,7 @@ async def scrape_reviews(
             method='POST',
             asp=True,
             country="US",
+            session="glassdoor_session",  # maintain cookies from initial page load
             headers={
                 "content-type": "application/json",
             },
