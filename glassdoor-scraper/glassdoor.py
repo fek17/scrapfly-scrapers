@@ -138,6 +138,7 @@ def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
 async def scrape_reviews(
     url: str,
     max_pages: Optional[int] = None,
+    start_page: int = 1,
     output_path: Optional[Union[str, Path]] = None,
 ) -> List[Dict]:
     """
@@ -145,7 +146,8 @@ async def scrape_reviews(
 
     Args:
         url: Glassdoor reviews page URL
-        max_pages: Maximum number of pages to scrape
+        max_pages: Maximum page number to scrape (e.g., 100 means stop at page 100)
+        start_page: Page number to start from (default 1, use to resume after crash)
         output_path: Optional path to save results incrementally (saves after each page)
     """
 
@@ -198,6 +200,7 @@ async def scrape_reviews(
 
     employer_metadata = parse_reviews_api_metadata(first_page_html)
 
+    # Always fetch page 1 to get total_pages metadata
     first_api_page = await SCRAPFLY.async_scrape(
         generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], 1)
     )
@@ -206,21 +209,30 @@ async def scrape_reviews(
         return []
 
     first_page_data = json.loads(first_api_page.content)
-    review_data.extend(first_page_data['data']['employerReviews']['reviews'])
     total_pages = first_page_data['data']['employerReviews']['numberOfPages']
 
     if max_pages and max_pages < total_pages:
         total_pages = max_pages
 
-    log.info("progress: page 1/{} - {} reviews collected", total_pages, len(review_data))
-    save_incremental(review_data)
+    # Only include page 1 reviews if starting from page 1
+    if start_page == 1:
+        review_data.extend(first_page_data['data']['employerReviews']['reviews'])
+        log.info("progress: page 1/{} - {} reviews collected", total_pages, len(review_data))
+        save_incremental(review_data)
 
+    # Calculate page range to scrape
+    first_remaining_page = max(2, start_page)
+    if first_remaining_page > total_pages:
+        log.info("start_page {} exceeds total_pages {}, nothing to scrape", start_page, total_pages)
+        return review_data
+
+    log.info("scraping pages {}-{} of {}", first_remaining_page, total_pages, total_pages)
     remaining_pages = [
         generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], page)
-        for page in range(2, total_pages + 1)
+        for page in range(first_remaining_page, total_pages + 1)
     ]
 
-    pages_scraped = 1
+    pages_scraped = first_remaining_page - 1
     async for result in SCRAPFLY.concurrent_scrape(remaining_pages):
         pages_scraped += 1
         if not isinstance(result, ScrapflyScrapeError):
