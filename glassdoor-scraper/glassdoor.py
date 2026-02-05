@@ -9,7 +9,8 @@ from enum import Enum
 import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple, TypedDict
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 from urllib.parse import urljoin
 
 from loguru import logger as log
@@ -134,8 +135,19 @@ def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
     }
 
 
-async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
-    """Scrape Glassdoor reviews listings from reviews page (with pagination)"""
+async def scrape_reviews(
+    url: str,
+    max_pages: Optional[int] = None,
+    output_path: Optional[Union[str, Path]] = None,
+) -> List[Dict]:
+    """
+    Scrape Glassdoor reviews listings from reviews page (with pagination)
+
+    Args:
+        url: Glassdoor reviews page URL
+        max_pages: Maximum number of pages to scrape
+        output_path: Optional path to save results incrementally (saves after each page)
+    """
 
     def generate_api_request_config(employer_id: int, dynamic_profile_id: int, page_number: int) -> ScrapeConfig:
         return ScrapeConfig(
@@ -171,19 +183,28 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
             })
         )
 
+    def save_incremental(data: List[Dict]) -> None:
+        """Save current results to output file"""
+        if output_path:
+            Path(output_path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
     review_data = []
     log.info("scraping reviews api requirements from {}", url)
 
     first_page_html = await SCRAPFLY.async_scrape(ScrapeConfig(url=url, **BASE_CONFIG))
     if isinstance(first_page_html, ScrapflyScrapeError):
         log.error(f"Failed to scrape the first page {url}, got: {first_page_html.message}")
-        return {"reviews": [], "message": "Failed to scrape initial page"}
+        return []
 
     employer_metadata = parse_reviews_api_metadata(first_page_html)
 
     first_api_page = await SCRAPFLY.async_scrape(
         generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], 1)
     )
+    if isinstance(first_api_page, ScrapflyScrapeError):
+        log.error(f"Failed to scrape first API page, got: {first_api_page.message}")
+        return []
+
     first_page_data = json.loads(first_api_page.content)
     review_data.extend(first_page_data['data']['employerReviews']['reviews'])
     total_pages = first_page_data['data']['employerReviews']['numberOfPages']
@@ -191,20 +212,26 @@ async def scrape_reviews(url: str, max_pages: Optional[int] = None) -> Dict:
     if max_pages and max_pages < total_pages:
         total_pages = max_pages
 
-    log.info("scraping reviews pagination from {}, scraping remaining {} pages", url, total_pages - 1)
+    log.info("progress: page 1/{} - {} reviews collected", total_pages, len(review_data))
+    save_incremental(review_data)
+
     remaining_pages = [
         generate_api_request_config(employer_metadata['employer_id'], employer_metadata['dynamic_profile_id'], page)
         for page in range(2, total_pages + 1)
     ]
 
+    pages_scraped = 1
     async for result in SCRAPFLY.concurrent_scrape(remaining_pages):
+        pages_scraped += 1
         if not isinstance(result, ScrapflyScrapeError):
             page_data = json.loads(result.content)
             review_data.extend(page_data['data']['employerReviews']['reviews'])
+            log.info("progress: page {}/{} - {} reviews collected", pages_scraped, total_pages, len(review_data))
+            save_incremental(review_data)
         else:
-            log.error(f"failed to scrape reviews page, got: {result.message}")
+            log.error(f"failed to scrape page {pages_scraped}/{total_pages}, got: {result.message}")
 
-    log.info("scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
+    log.info("completed: scraped {} reviews from {} in {} pages", len(review_data), url, total_pages)
     return review_data
 
 

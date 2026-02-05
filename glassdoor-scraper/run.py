@@ -31,8 +31,10 @@ async def run():
     output.joinpath("salaries.json").write_text(json.dumps(result_salaries, indent=2, ensure_ascii=False))
 
     url = "https://www.glassdoor.com/Reviews/eBay-Reviews-E7853.htm"
-    result_reviews = await glassdoor.scrape_reviews(url, max_pages=3)
-    output.joinpath("reviews.json").write_text(json.dumps(result_reviews, indent=2, ensure_ascii=False))
+    reviews_output = output.joinpath("reviews.json")
+    result_reviews = await glassdoor.scrape_reviews(url, max_pages=3, output_path=reviews_output)
+    # Final save (also saved incrementally during scraping)
+    reviews_output.write_text(json.dumps(result_reviews, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
