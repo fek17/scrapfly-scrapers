@@ -123,7 +123,7 @@ def parse_reviews(result: ScrapeApiResponse) -> Dict:
     return reviews_data
 
 
-def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
+def parse_reviews_api_metadata(result: ScrapeApiResponse, debug_dir: Optional[str] = None) -> Dict:
     """parse Glassdoor reviews api metadata from html page"""
     selector = result.selector
 
@@ -163,6 +163,13 @@ def parse_reviews_api_metadata(result: ScrapeApiResponse) -> Dict:
                         'dynamic_profile_id': int(value['profileId']),
                     }
 
+    # Save debug HTML if parsing fails
+    if debug_dir:
+        from pathlib import Path
+        debug_path = Path(debug_dir) / "debug_page.html"
+        debug_path.write_text(result.content, encoding='utf-8')
+        log.warning(f"Saved debug HTML to {debug_path}")
+
     raise ValueError("Could not find employer metadata in page. The page structure may have changed.")
 
 
@@ -170,7 +177,8 @@ async def scrape_reviews(
     url: str,
     max_pages: Optional[int] = None,
     start_page: int = 1,
-    output_file: Optional[str] = None
+    output_file: Optional[str] = None,
+    debug: bool = False
 ) -> List[Dict]:
     """
     Scrape Glassdoor reviews listings from reviews page (with pagination)
@@ -180,6 +188,7 @@ async def scrape_reviews(
         max_pages: Maximum number of pages to scrape (None for all)
         start_page: Page number to start from (for resuming interrupted scrapes)
         output_file: If provided, saves reviews incrementally to this JSON file
+        debug: If True, saves HTML to results/debug_page.html when parsing fails
 
     Returns:
         List of review dictionaries
@@ -247,7 +256,15 @@ async def scrape_reviews(
         return review_data if review_data else []
 
     try:
-        employer_metadata = parse_reviews_api_metadata(first_page_html)
+        # Get debug directory from output_file path, or use current directory
+        debug_dir = None
+        if debug:
+            if output_file:
+                from pathlib import Path
+                debug_dir = str(Path(output_file).parent)
+            else:
+                debug_dir = "."
+        employer_metadata = parse_reviews_api_metadata(first_page_html, debug_dir=debug_dir)
         employer_id = employer_metadata['employer_id']
         dynamic_profile_id = employer_metadata['dynamic_profile_id']
     except (ValueError, KeyError) as e:

@@ -34,11 +34,13 @@ async def run():
     # Reviews scraper now supports incremental saves and resume capability:
     # - output_file: saves after each page (prevents data loss on failures)
     # - start_page: resume from a specific page if previous scrape was interrupted
+    # - debug: saves HTML to results/debug_page.html when parsing fails
     reviews_file = str(output.joinpath("reviews.json"))
     result_reviews = await glassdoor.scrape_reviews(
         url,
         max_pages=3,
-        output_file=reviews_file  # enables incremental saves
+        output_file=reviews_file,  # enables incremental saves
+        debug=True  # saves debug HTML on failure
     )
     # Note: when using output_file, data is saved automatically after each page
     # If not using output_file, save manually:
