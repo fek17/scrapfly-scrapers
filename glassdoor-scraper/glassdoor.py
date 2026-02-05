@@ -24,8 +24,8 @@ BASE_CONFIG = {
     "render_js": True,
     # Wait for page to fully load (may help bypass JS challenges)
     "rendering_wait": 5000,
-    # Use session to maintain cookies which may help bypass login walls
-    "session": "glassdoor_session",
+    # Uncomment to use session stickiness (can help or hurt depending on site)
+    # "session": "glassdoor_session",
     # Uncomment to use residential proxies (costs more API credits but may help with blocks)
     # "proxy_pool": "public_residential_pool",
 }
@@ -206,7 +206,6 @@ async def scrape_reviews(
             method='POST',
             asp=True,
             country="US",
-            session="glassdoor_session",  # maintain cookies from initial page load
             headers={
                 "content-type": "application/json",
             },
