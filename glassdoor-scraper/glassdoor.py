@@ -31,17 +31,46 @@ def find_hidden_data(result: ScrapeApiResponse) -> Optional[dict]:
     Extract hidden web cache (Apollo Graphql framework) from Glassdoor page HTML
     It's either in NEXT_DATA script or direct apolloState js variable
     """
-    # data can be in __NEXT_DATA__ cache
-    data = result.selector.css("script#__NEXT_DATA__::text").get()
-    if data:
-        data = json.loads(data)["props"]["pageProps"]["apolloCache"]
-    else:
-        match = re.search(r'apolloState":\s*({.+})};', result.content)
-        if match:
-            data = json.loads(match.group(1))
-        else:
-            log.warning(f"Could not find __NEXT_DATA__ or apolloState on page {result.context['url']}")
-            return None
+    data = None
+
+    # Try __NEXT_DATA__ script tag first
+    next_data = result.selector.css("script#__NEXT_DATA__::text").get()
+    if next_data:
+        try:
+            parsed = json.loads(next_data)
+            data = parsed.get("props", {}).get("pageProps", {}).get("apolloCache")
+            if data:
+                log.debug("Found data in __NEXT_DATA__")
+        except json.JSONDecodeError:
+            log.warning("Failed to parse __NEXT_DATA__ JSON")
+
+    # Try various apolloState patterns
+    if not data:
+        patterns = [
+            r'apolloState":\s*({.+})};',
+            r'apolloState":\s*({.+?})\s*,\s*"',
+            r'"apolloState":(\{.+?\})\s*\}',
+            r'window\.__APOLLO_STATE__\s*=\s*({.+?});',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, result.content, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                    log.debug(f"Found data using pattern: {pattern[:30]}...")
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+    if not data:
+        # Log some debug info about what we found
+        log.warning(f"Could not find __NEXT_DATA__ or apolloState on page {result.context['url']}")
+        # Check if we hit a captcha or error page
+        if "captcha" in result.content.lower():
+            log.error("Detected captcha page - may need to retry")
+        elif "access denied" in result.content.lower() or "forbidden" in result.content.lower():
+            log.error("Detected access denied page")
+        return None
 
     def _unpack_apollo_data(apollo_data):
         """
